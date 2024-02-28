@@ -4,6 +4,7 @@ import (
     "context"
     "encoding/json"
     "flag"
+    "fmt"
     "os"
     "path"
     "time"
@@ -15,6 +16,7 @@ import (
     taints "k8s.io/kubernetes/pkg/util/taints"
     types "k8s.io/apimachinery/pkg/types"
     "k8s.io/client-go/kubernetes"
+    "k8s.io/client-go/rest"
     "k8s.io/client-go/tools/clientcmd"
     "k8s.io/klog/v2"
 )
@@ -27,6 +29,9 @@ type patchNodeSpec struct {
 
 var (
     ctx = context.Background()
+    config *rest.Config
+    client *kubernetes.Clientset
+    err error
 )
 
 func CheckSkipNode(client *kubernetes.Clientset, name string) bool {
@@ -159,20 +164,31 @@ func main() {
     flag.Parse()
     klog.V(4).InfoS("Asklepios is starting")
 
-    home, err := os.UserHomeDir()
+    // try in-cluster config first
+    klog.V(4).InfoS("Try in-cluster config")
+    config, err = rest.InClusterConfig()
     if err != nil {
-        klog.ErrorS(err, "Could not find the home directory")
+        klog.V(4).ErrorS(err, err.Error())
+    } else {
+        // try out-out-cluster config 
+        home, err := os.UserHomeDir()
+        if err != nil {
+            panic(err.Error())
+        } else {
+            klog.V(4).InfoS("Home directory", "home", home)
+            if _, err := os.Stat(path.Join(home, ".kube/config")); err == nil {
+                config, err = clientcmd.BuildConfigFromFlags("",
+                                path.Join(home, ".kube/config"))
+                if err != nil {
+                    panic(err.Error())
+                }
+                klog.V(4).InfoS("Found API server", "API-Server", config.Host)
+            } else {
+                panic(err.Error())
+            }
+        }
     }
-    klog.V(4).InfoS("Home directory", "home", home)
-
-    config, err := clientcmd.BuildConfigFromFlags("",
-                        path.Join(home, ".kube/config"))
-    if err != nil {
-        panic(err.Error())
-    }
-    klog.V(4).InfoS("Found K8S api server", "API-Server", config.Host)
-
-    client, err := kubernetes.NewForConfig(config)
+    client, err = kubernetes.NewForConfig(config)
     if err != nil {
         panic(err.Error())
     }
@@ -198,8 +214,9 @@ func main() {
             }
             for _, cond := range node.Status.Conditions {
                 if cond.Type == "Ready" {
+                    ltt := cond.LastTransitionTime.Unix()
                     if cond.Status != v1.ConditionTrue {
-                        if cond.LastTransitionTime.Unix() < kickoutThreshold {
+                        if ltt < kickoutThreshold {
                             klog.V(0).InfoS("Node is not ready",
                               "node", node.Name,
                               "status", cond.Status,
@@ -216,8 +233,7 @@ func main() {
                                 klog.ErrorS(err, err.Error())
                             }
                         } else {
-                            ltt := cond.LastTransitionTime.Unix()
-                            tk := kickoutThreshold-ltt
+                            tk := ltt - kickoutThreshold
                             klog.V(0).InfoS("Node is not ready",
                               "node", node.Name,
                               "status", cond.Status,
@@ -225,7 +241,7 @@ func main() {
                               "timeToKickOut", tk)
                         }
                     } else {
-                        if cond.LastTransitionTime.Unix() < kickinThreshold {
+                        if ltt < kickinThreshold {
                             klog.V(0).InfoS("Node is ready",
                               "node", node.Name,
                               "status", cond.Status,
@@ -242,8 +258,7 @@ func main() {
                                 klog.ErrorS(err, err.Error())
                             }
                         } else {
-                            ltt := cond.LastTransitionTime.Unix()
-                            tk := kickinThreshold-ltt
+                            tk := ltt - kickinThreshold
                             klog.V(0).InfoS("Node is ready",
                               "node", node.Name,
                               "status", cond.Status,
