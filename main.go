@@ -8,6 +8,8 @@ import (
     "path"
     "time"
 
+    "github.com/spf13/viper"
+
     v1 "k8s.io/api/core/v1"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     taints "k8s.io/kubernetes/pkg/util/taints"
@@ -25,18 +27,38 @@ type patchNodeSpec struct {
 
 var (
     ctx = context.Background()
-    sleep time.Duration = 10*time.Second
-    interval time.Duration = 3*time.Second
-    kickout int64 = 60
-    kickin int64 = 60
 )
 
+func CheckSkipNode(client *kubernetes.Clientset, name string) bool {
+    skipNode := false
+    var skipNodeTaint = v1.Taint {
+        Key: "node.kubernetes.io/asklepios",
+        Value: "skip",
+        Effect: v1.TaintEffectNoExecute,
+    }
+    // fetch node object
+    node, err := client.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
+    if err != nil {
+        return skipNode
+    }
+    klog.V(4).InfoS("Got the node object", "node", name)
+    if taints.TaintExists(node.Spec.Taints, &skipNodeTaint) {
+        klog.V(0).InfoS("Skip the node (Reason: Node has SkipNode taint)",
+          "node", node.Name,
+          "taintKey", skipNodeTaint.Key,
+          "taintValue", skipNodeTaint.Value)
+        skipNode = true
+    }
+    return skipNode 
+
+
+}
 func TaintNode(client *kubernetes.Clientset, name string, taint bool) error {
     var newNode *v1.Node
     var updated bool
     var err error
     var noExecuteTaint = v1.Taint {
-        Key: "node.kubernetes.io/test",
+        Key: "node.kubernetes.io/out-of-service",
         Value: "nodeshutdown",
         Effect: v1.TaintEffectNoExecute,
         TimeAdded: &metav1.Time{Time: time.Now()},
@@ -72,9 +94,9 @@ func TaintNode(client *kubernetes.Clientset, name string, taint bool) error {
 func CordonNode(client *kubernetes.Clientset,
                 name string, cordon bool) error {
     var err error
-    var action string = "make the node schedulable"
+    var action string = "Make the node schedulable"
     if cordon {
-        action = "make the node unschedulable"
+        action = "Make the node unschedulable"
     }
     node, err := client.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
     if err != nil {
@@ -105,6 +127,33 @@ func CordonNode(client *kubernetes.Clientset,
     return err
 }
 func main() {
+    // Initialize Viper if config.yaml exists
+    if _, err := os.Stat("config.yaml"); err == nil {
+        viper.SetConfigName("config")
+        viper.SetConfigType("yaml")
+        viper.AddConfigPath(".")
+        err := viper.ReadInConfig()
+        if err != nil {
+            panic(err.Error())
+        }
+    } else {
+        viper.Set("sleep", 10)
+        viper.Set("interval", 3)
+        viper.Set("kickout", 60)
+        viper.Set("kickin", 60)
+    }
+    // configuration values
+    sleepSeconds := viper.GetInt("sleep")
+    intervalSeconds := viper.GetInt("interval")
+    kickoutSeconds := viper.GetInt64("kickout")
+    kickinSeconds := viper.GetInt64("kickin")
+    var (
+        sleep time.Duration = time.Duration(sleepSeconds)*time.Second
+        interval time.Duration = time.Duration(intervalSeconds)*time.Second
+        kickout int64 = kickoutSeconds
+        kickin int64 = kickinSeconds
+    )
+
     klog.InitFlags(nil)
     defer klog.Flush()
     flag.Parse()
@@ -138,21 +187,23 @@ func main() {
             panic(err.Error())
         }
         kickoutThreshold := time.Now().Unix() - kickout
-        kickoutThresholdRFC3339 := time.Unix(kickoutThreshold, 0).
-                                    Format(time.RFC3339)
+        //kickoutThresholdRFC3339 := time.Unix(kickoutThreshold, 0).
+        //                            Format(time.RFC3339)
         kickinThreshold := time.Now().Unix() - kickin
-        kickinThresholdRFC3339 := time.Unix(kickinThreshold, 0).
-                                    Format(time.RFC3339)
+        //kickinThresholdRFC3339 := time.Unix(kickinThreshold, 0).
+        //                            Format(time.RFC3339)
         for _, node := range nodes.Items {
+            if CheckSkipNode(client, node.Name) {
+                continue
+            }
             for _, cond := range node.Status.Conditions {
                 if cond.Type == "Ready" {
                     if cond.Status != v1.ConditionTrue {
-                        klog.V(0).InfoS("Node is not ready",
-                          "node", node.Name,
-                          "status", cond.Status,
-                          "LastTransitiontime", cond.LastTransitionTime,
-                          "kickoutThreshold", kickoutThresholdRFC3339)
                         if cond.LastTransitionTime.Unix() < kickoutThreshold {
+                            klog.V(0).InfoS("Node is not ready",
+                              "node", node.Name,
+                              "status", cond.Status,
+                              "kickedOut", true)
                             // cordon the node
                             err := CordonNode(client, node.Name, true)
                             if err != nil {
@@ -164,14 +215,21 @@ func main() {
                             if err2 != nil {
                                 klog.ErrorS(err, err.Error())
                             }
+                        } else {
+                            ltt := cond.LastTransitionTime.Unix()
+                            tk := kickoutThreshold-ltt
+                            klog.V(0).InfoS("Node is not ready",
+                              "node", node.Name,
+                              "status", cond.Status,
+                              "kickedOut", false,
+                              "timeToKickOut", tk)
                         }
                     } else {
-                        klog.V(0).InfoS("Node is ready",
-                          "node", node.Name,
-                          "status", cond.Status,
-                          "LastTransitionTime", cond.LastTransitionTime,
-                          "kickoutThreshold", kickinThresholdRFC3339)
                         if cond.LastTransitionTime.Unix() < kickinThreshold {
+                            klog.V(0).InfoS("Node is ready",
+                              "node", node.Name,
+                              "status", cond.Status,
+                              "kickedIn", true)
                             // uncordon the node
                             err := CordonNode(client, node.Name, false)
                             if err != nil {
@@ -183,6 +241,14 @@ func main() {
                             if err2 != nil {
                                 klog.ErrorS(err, err.Error())
                             }
+                        } else {
+                            ltt := cond.LastTransitionTime.Unix()
+                            tk := kickinThreshold-ltt
+                            klog.V(0).InfoS("Node is ready",
+                              "node", node.Name,
+                              "status", cond.Status,
+                              "kickedIn", false,
+                              "timeToKickIn", tk)
                         }
                     }
                 }
