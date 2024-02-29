@@ -1,14 +1,30 @@
-package main
+/*
+Copyright © 2024 Heechul Kim <jijisa@iorchard.net>
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+package cmd
 
 import (
     "context"
     "encoding/json"
     "flag"
-    "fmt"
+	"fmt"
     "os"
     "path"
     "time"
 
+	"github.com/spf13/cobra"
     "github.com/spf13/viper"
 
     v1 "k8s.io/api/core/v1"
@@ -34,124 +50,48 @@ var (
     err error
 )
 
-func CheckSkipNode(client *kubernetes.Clientset, name string) bool {
-    skipNode := false
-    var skipNodeTaint = v1.Taint {
-        Key: "node.kubernetes.io/asklepios",
-        Value: "skip",
-        Effect: v1.TaintEffectNoExecute,
-    }
-    // fetch node object
-    node, err := client.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
-    if err != nil {
-        return skipNode
-    }
-    klog.V(4).InfoS("Got the node object", "node", name)
-    if taints.TaintExists(node.Spec.Taints, &skipNodeTaint) {
-        klog.V(0).InfoS("Skip the node (Reason: Node has SkipNode taint)",
-          "node", node.Name,
-          "taintKey", skipNodeTaint.Key,
-          "taintValue", skipNodeTaint.Value)
-        skipNode = true
-    }
-    return skipNode 
-
-
+// serveCmd represents the serve command
+var serveCmd = &cobra.Command{
+	Use:   "serve",
+	Short: "Check node status and execute an auto-healing process",
+	Long: `Check node status and execute an auto-healing process
+when a node is not ready`,
+	Run: func(cmd *cobra.Command, args []string) {
+        runAsklepios(cmd)
+	},
 }
-func TaintNode(client *kubernetes.Clientset, name string, taint bool) error {
-    var newNode *v1.Node
-    var updated bool
-    var err error
-    var noExecuteTaint = v1.Taint {
-        Key: "node.kubernetes.io/out-of-service",
-        Value: "nodeshutdown",
-        Effect: v1.TaintEffectNoExecute,
-        TimeAdded: &metav1.Time{Time: time.Now()},
-    }
-    var action string 
-    // fetch node object
-    node, err := client.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
+
+func init() {
+	rootCmd.AddCommand(serveCmd)
+    serveCmd.Flags().StringP("config", "c", "config.yaml", 
+        "asklepios config file path")
+}
+
+func runAsklepios(cmd *cobra.Command) {
+    // Initialize Viper if conffile exists
+    viper.SetDefault("sleep", 10)
+    viper.SetDefault("interval", 3)
+    viper.SetDefault("kickout", 60)
+    viper.SetDefault("kickin", 60)
+    conffile, _ := cmd.Flags().GetString("config")
+    _, err := os.Stat(conffile)
     if err != nil {
-        return err
-    }
-    klog.V(4).InfoS("Got the node object", "node", name)
-    if taint && !taints.TaintExists(node.Spec.Taints, &noExecuteTaint) {
-        action = "Add the taint"
-        newNode, updated, err = taints.AddOrUpdateTaint(node, &noExecuteTaint)
-    } else if !taint && taints.TaintExists(node.Spec.Taints, &noExecuteTaint) {
-        action = "Remove the taint"
-        newNode, updated, err = taints.RemoveTaint(node, &noExecuteTaint)
+        klog.V(0).InfoS("Could not find config file", "config", conffile)
+        klog.V(0).InfoS("Use the default config values")
     } else {
-        return nil
-    }
-    if err == nil && updated {
-        _, err = client.CoreV1().Nodes().Update(ctx, 
-            newNode, metav1.UpdateOptions{})
-        if err == nil {
-            klog.V(0).InfoS("Succeeded to process the node",
-              "node", node.Name,
-              "action", action,
-            )
-        }
-    }
-    return err
-}
-func CordonNode(client *kubernetes.Clientset,
-                name string, cordon bool) error {
-    var err error
-    var action string = "Make the node schedulable"
-    if cordon {
-        action = "Make the node unschedulable"
-    }
-    node, err := client.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
-    if err != nil {
-        return err
-    }
-    doit := (node.Spec.Unschedulable && !cordon) || 
-                (!node.Spec.Unschedulable && cordon)
-    if doit {
-        payload := []patchNodeSpec{{
-            Op:     "replace",
-            Path:   "/spec/unschedulable",
-            Value:  cordon,
-        }}
-        bpayload, _ := json.Marshal(payload)
-        _, err := client.CoreV1().Nodes().
-            Patch(ctx, name, 
-                types.JSONPatchType,
-                bpayload,
-                metav1.PatchOptions{},
-                )
-        if err == nil {
-            klog.V(0).InfoS("Succeeded to process the node",
-              "node", node.Name,
-              "action", action,
-            )
-        }
-    }
-    return err
-}
-func main() {
-    // Initialize Viper if config.yaml exists
-    if _, err := os.Stat("config.yaml"); err == nil {
-        viper.SetConfigName("config")
         viper.SetConfigType("yaml")
-        viper.AddConfigPath(".")
+        viper.SetConfigFile(conffile)
         err := viper.ReadInConfig()
         if err != nil {
             panic(err.Error())
         }
-    } else {
-        viper.Set("sleep", 10)
-        viper.Set("interval", 3)
-        viper.Set("kickout", 60)
-        viper.Set("kickin", 60)
-    }
+    } 
     // configuration values
     sleepSeconds := viper.GetInt("sleep")
     intervalSeconds := viper.GetInt("interval")
     kickoutSeconds := viper.GetInt64("kickout")
     kickinSeconds := viper.GetInt64("kickin")
+    fmt.Println(sleepSeconds)
     var (
         sleep time.Duration = time.Duration(sleepSeconds)*time.Second
         interval time.Duration = time.Duration(intervalSeconds)*time.Second
@@ -163,19 +103,19 @@ func main() {
     defer klog.Flush()
     flag.Parse()
     klog.V(4).InfoS("Asklepios is starting")
-
     // try in-cluster config first
     klog.V(4).InfoS("Try in-cluster config")
     config, err = rest.InClusterConfig()
-    if err != nil {
-        klog.V(4).ErrorS(err, err.Error())
+    if err == nil {
+        klog.V(4).InfoS("In-cluster config is working")
     } else {
+        klog.V(4).InfoS("In-cluster config is not working")
         // try out-out-cluster config 
+        klog.V(4).InfoS("Try out-of-cluster config ($HOME/.kube/config)")
         home, err := os.UserHomeDir()
         if err != nil {
             panic(err.Error())
         } else {
-            klog.V(4).InfoS("Home directory", "home", home)
             if _, err := os.Stat(path.Join(home, ".kube/config")); err == nil {
                 config, err = clientcmd.BuildConfigFromFlags("",
                                 path.Join(home, ".kube/config"))
@@ -271,4 +211,99 @@ func main() {
         }
         time.Sleep(sleep)
     }
+}
+func CheckSkipNode(client *kubernetes.Clientset, name string) bool {
+    skipNode := false
+    var skipNodeTaint = v1.Taint {
+        Key: "node.kubernetes.io/asklepios",
+        Value: "skip",
+        Effect: v1.TaintEffectNoExecute,
+    }
+    // fetch node object
+    node, err := client.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
+    if err != nil {
+        return skipNode
+    }
+    klog.V(4).InfoS("Got the node info", "node", name)
+    if taints.TaintExists(node.Spec.Taints, &skipNodeTaint) {
+        klog.V(0).InfoS("Skip the node (Reason: Node has SkipNode taint)",
+          "node", node.Name,
+          "taintKey", skipNodeTaint.Key,
+          "taintValue", skipNodeTaint.Value)
+        skipNode = true
+    }
+    return skipNode
+}
+func TaintNode(client *kubernetes.Clientset, name string, taint bool) error {
+    var newNode *v1.Node
+    var updated bool
+    var err error
+    var noExecuteTaint = v1.Taint {
+        Key: "node.kubernetes.io/out-of-service",
+        Value: "nodeshutdown",
+        Effect: v1.TaintEffectNoExecute,
+        TimeAdded: &metav1.Time{Time: time.Now()},
+    }
+    var action string
+    // fetch node object
+    node, err := client.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
+    if err != nil {
+        return err
+    }
+    klog.V(4).InfoS("Got the node object", "node", name)
+    if taint && !taints.TaintExists(node.Spec.Taints, &noExecuteTaint) {
+        action = "Add the taint"
+        newNode, updated, err = taints.AddOrUpdateTaint(node, &noExecuteTaint)
+    } else if !taint && taints.TaintExists(node.Spec.Taints, &noExecuteTaint) {
+        action = "Remove the taint"
+        newNode, updated, err = taints.RemoveTaint(node, &noExecuteTaint)
+    } else {
+        return nil
+    }
+    if err == nil && updated {
+        _, err = client.CoreV1().Nodes().Update(ctx,
+            newNode, metav1.UpdateOptions{})
+        if err == nil {
+            klog.V(0).InfoS("Succeeded to process the node",
+              "node", node.Name,
+              "action", action,
+            )
+        }
+    }
+    return err
+}
+func CordonNode(client *kubernetes.Clientset,
+                name string, cordon bool) error {
+    var err error
+    var action string = "Make the node schedulable"
+    if cordon {
+        action = "Make the node unschedulable"
+    }
+    node, err := client.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
+    if err != nil {
+        return err
+    }
+    doit := (node.Spec.Unschedulable && !cordon) || 
+                (!node.Spec.Unschedulable && cordon)
+    if doit {
+        payload := []patchNodeSpec{{
+            Op:     "replace",
+            Path:   "/spec/unschedulable",
+            Value:  cordon,
+        }}
+        bpayload, _ := json.Marshal(payload)
+        _, err := client.CoreV1().Nodes().
+            Patch(ctx, name, 
+                types.JSONPatchType,
+                bpayload,
+                metav1.PatchOptions{},
+                )
+        if err == nil {
+            klog.V(0).InfoS("Succeeded to process the node",
+              "node", node.Name,
+              "action", action,
+            )
+        }
+    }
+    return err
 }
