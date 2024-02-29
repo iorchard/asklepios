@@ -13,10 +13,28 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-package main
+package cmd
 
-import "github.com/iorchard/asklepios/cmd"
+import (
+	"fmt"
 
-func main() {
-	cmd.Execute()
+	"github.com/spf13/cobra"
+)
+
+var (
+    ver string = "0.0.1"
+    id string
+)
+
+// versionCmd represents the version command
+var versionCmd = &cobra.Command{
+	Use:   "version",
+	Short: "Show version",
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Printf("%s (%s)\n", ver, id)
+	},
+}
+
+func init() {
+	rootCmd.AddCommand(versionCmd)
 }

@@ -49,6 +49,7 @@ func Execute() {
 func init() {
 	cobra.OnInitialize(initConfig)
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.asklepios.yaml)")
+	rootCmd.PersistentFlags().IntP("verbose", "v", 0, "log verbose level (0-5)")
 }
 
 // initConfig reads in config file and ENV variables if set.

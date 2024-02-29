@@ -1,4 +1,4 @@
-module iorchard/asklepios
+module github.com/iorchard/asklepios
 
 go 1.22.0
 

@@ -19,7 +19,6 @@ import (
     "context"
     "encoding/json"
     "flag"
-	"fmt"
     "os"
     "path"
     "time"
@@ -68,6 +67,9 @@ func init() {
 }
 
 func runAsklepios(cmd *cobra.Command) {
+    klog.InitFlags(nil)
+    defer klog.Flush()
+    flag.Parse()
     // Initialize Viper if conffile exists
     viper.SetDefault("sleep", 10)
     viper.SetDefault("interval", 3)
@@ -76,9 +78,14 @@ func runAsklepios(cmd *cobra.Command) {
     conffile, _ := cmd.Flags().GetString("config")
     _, err := os.Stat(conffile)
     if err != nil {
-        klog.V(0).InfoS("Could not find config file", "config", conffile)
-        klog.V(0).InfoS("Use the default config values")
+        klog.V(4).InfoS("Could not find config file", "config", conffile)
+        klog.V(4).InfoS("Use the default config values",
+            "sleep", viper.GetInt("sleep"),
+            "interval", viper.GetInt("interval"),
+            "kickout", viper.GetInt("kickout"),
+            "kickin", viper.GetInt("kickin"))
     } else {
+        klog.V(4).InfoS("Found config file", "config", conffile)
         viper.SetConfigType("yaml")
         viper.SetConfigFile(conffile)
         err := viper.ReadInConfig()
@@ -91,7 +98,6 @@ func runAsklepios(cmd *cobra.Command) {
     intervalSeconds := viper.GetInt("interval")
     kickoutSeconds := viper.GetInt64("kickout")
     kickinSeconds := viper.GetInt64("kickin")
-    fmt.Println(sleepSeconds)
     var (
         sleep time.Duration = time.Duration(sleepSeconds)*time.Second
         interval time.Duration = time.Duration(intervalSeconds)*time.Second
@@ -99,35 +105,8 @@ func runAsklepios(cmd *cobra.Command) {
         kickin int64 = kickinSeconds
     )
 
-    klog.InitFlags(nil)
-    defer klog.Flush()
-    flag.Parse()
-    klog.V(4).InfoS("Asklepios is starting")
-    // try in-cluster config first
-    klog.V(4).InfoS("Try in-cluster config")
-    config, err = rest.InClusterConfig()
-    if err == nil {
-        klog.V(4).InfoS("In-cluster config is working")
-    } else {
-        klog.V(4).InfoS("In-cluster config is not working")
-        // try out-out-cluster config 
-        klog.V(4).InfoS("Try out-of-cluster config ($HOME/.kube/config)")
-        home, err := os.UserHomeDir()
-        if err != nil {
-            panic(err.Error())
-        } else {
-            if _, err := os.Stat(path.Join(home, ".kube/config")); err == nil {
-                config, err = clientcmd.BuildConfigFromFlags("",
-                                path.Join(home, ".kube/config"))
-                if err != nil {
-                    panic(err.Error())
-                }
-                klog.V(4).InfoS("Found API server", "API-Server", config.Host)
-            } else {
-                panic(err.Error())
-            }
-        }
-    }
+    klog.V(4).InfoS("Asklepios service is starting")
+    config = KubeConfig()
     client, err = kubernetes.NewForConfig(config)
     if err != nil {
         panic(err.Error())
@@ -140,14 +119,12 @@ func runAsklepios(cmd *cobra.Command) {
                     LabelSelector:"node-role.kubernetes.io/control-plane=",
                 })
         if err != nil {
-            panic(err.Error())
+            klog.ErrorS(err, err.Error())
+            time.Sleep(sleep)
+            continue
         }
         kickoutThreshold := time.Now().Unix() - kickout
-        //kickoutThresholdRFC3339 := time.Unix(kickoutThreshold, 0).
-        //                            Format(time.RFC3339)
         kickinThreshold := time.Now().Unix() - kickin
-        //kickinThresholdRFC3339 := time.Unix(kickinThreshold, 0).
-        //                            Format(time.RFC3339)
         for _, node := range nodes.Items {
             if CheckSkipNode(client, node.Name) {
                 continue
@@ -226,7 +203,7 @@ func CheckSkipNode(client *kubernetes.Clientset, name string) bool {
     }
     klog.V(4).InfoS("Got the node info", "node", name)
     if taints.TaintExists(node.Spec.Taints, &skipNodeTaint) {
-        klog.V(0).InfoS("Skip the node (Reason: Node has SkipNode taint)",
+        klog.V(0).InfoS("Skip the node (Reason: Node has the Skip taint)",
           "node", node.Name,
           "taintKey", skipNodeTaint.Key,
           "taintValue", skipNodeTaint.Value)
@@ -252,10 +229,10 @@ func TaintNode(client *kubernetes.Clientset, name string, taint bool) error {
     }
     klog.V(4).InfoS("Got the node object", "node", name)
     if taint && !taints.TaintExists(node.Spec.Taints, &noExecuteTaint) {
-        action = "Add the taint"
+        action = "Add the out-of-service taint"
         newNode, updated, err = taints.AddOrUpdateTaint(node, &noExecuteTaint)
     } else if !taint && taints.TaintExists(node.Spec.Taints, &noExecuteTaint) {
-        action = "Remove the taint"
+        action = "Remove the out-of-service taint"
         newNode, updated, err = taints.RemoveTaint(node, &noExecuteTaint)
     } else {
         return nil
@@ -306,4 +283,32 @@ func CordonNode(client *kubernetes.Clientset,
         }
     }
     return err
+}
+func KubeConfig() *rest.Config {
+    // try in-cluster config first
+    klog.V(4).InfoS("Try in-cluster config")
+    config, err = rest.InClusterConfig()
+    if err == nil {
+        klog.V(4).InfoS("In-cluster config is working")
+    } else {
+        klog.V(4).InfoS("In-cluster config is not working")
+        // try out-out-cluster config 
+        klog.V(4).InfoS("Try out-of-cluster config ($HOME/.kube/config)")
+        home, err := os.UserHomeDir()
+        if err != nil {
+            panic(err.Error())
+        } else {
+            if _, err := os.Stat(path.Join(home, ".kube/config")); err == nil {
+                config, err = clientcmd.BuildConfigFromFlags("",
+                                path.Join(home, ".kube/config"))
+                if err != nil {
+                    panic(err.Error())
+                }
+                klog.V(4).InfoS("Found API server", "API-Server", config.Host)
+            } else {
+                panic(err.Error())
+            }
+        }
+    }
+    return config
 }
