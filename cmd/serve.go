@@ -17,22 +17,18 @@ package cmd
 
 import (
     "context"
-    "encoding/json"
     "flag"
     "os"
-    "path"
     "time"
 
-	"github.com/spf13/cobra"
+    "github.com/iorchard/asklepios/utils"
+    "github.com/spf13/cobra"
     "github.com/spf13/viper"
 
     v1 "k8s.io/api/core/v1"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-    taints "k8s.io/kubernetes/pkg/util/taints"
-    types "k8s.io/apimachinery/pkg/types"
     "k8s.io/client-go/kubernetes"
     "k8s.io/client-go/rest"
-    "k8s.io/client-go/tools/clientcmd"
     "k8s.io/klog/v2"
 )
 
@@ -51,17 +47,17 @@ var (
 
 // serveCmd represents the serve command
 var serveCmd = &cobra.Command{
-	Use:   "serve",
-	Short: "Check node status and execute an auto-healing process",
-	Long: `Check node status and execute an auto-healing process
+    Use:   "serve",
+    Short: "Check node status and execute an auto-healing process",
+    Long: `Check node status and execute an auto-healing process
 when a node is not ready`,
-	Run: func(cmd *cobra.Command, args []string) {
+    Run: func(cmd *cobra.Command, args []string) {
         runAsklepios(cmd)
-	},
+    },
 }
 
 func init() {
-	rootCmd.AddCommand(serveCmd)
+    rootCmd.AddCommand(serveCmd)
     serveCmd.Flags().StringP("config", "c", "config.yaml", 
         "asklepios config file path")
 }
@@ -106,7 +102,7 @@ func runAsklepios(cmd *cobra.Command) {
     )
 
     klog.V(4).InfoS("Asklepios service is starting")
-    config = KubeConfig()
+    config = utils.KubeConfig()
     client, err = kubernetes.NewForConfig(config)
     if err != nil {
         panic(err.Error())
@@ -126,7 +122,7 @@ func runAsklepios(cmd *cobra.Command) {
         kickoutThreshold := time.Now().Unix() - kickout
         kickinThreshold := time.Now().Unix() - kickin
         for _, node := range nodes.Items {
-            if CheckSkipNode(client, node.Name) {
+            if utils.CheckSkipNode(client, node.Name) {
                 continue
             }
             for _, cond := range node.Status.Conditions {
@@ -139,13 +135,13 @@ func runAsklepios(cmd *cobra.Command) {
                               "status", cond.Status,
                               "kickedOut", true)
                             // cordon the node
-                            err := CordonNode(client, node.Name, true)
+                            err := utils.CordonNode(client, node.Name, true)
                             if err != nil {
                                 klog.ErrorS(err, err.Error())
                             }
                             time.Sleep(interval)
                             // taint node.kubernetes.io/out-of-service
-                            err2 := TaintNode(client, node.Name, true)
+                            err2 := utils.TaintNode(client, node.Name, true)
                             if err2 != nil {
                                 klog.ErrorS(err, err.Error())
                             }
@@ -164,13 +160,13 @@ func runAsklepios(cmd *cobra.Command) {
                               "status", cond.Status,
                               "kickedIn", true)
                             // uncordon the node
-                            err := CordonNode(client, node.Name, false)
+                            err := utils.CordonNode(client, node.Name, false)
                             if err != nil {
                                 klog.ErrorS(err, err.Error())
                             }
                             time.Sleep(interval)
                             // remove taint node.kubernetes.io/out-of-service
-                            err2 := TaintNode(client, node.Name, false)
+                            err2 := utils.TaintNode(client, node.Name, false)
                             if err2 != nil {
                                 klog.ErrorS(err, err.Error())
                             }
@@ -189,6 +185,7 @@ func runAsklepios(cmd *cobra.Command) {
         time.Sleep(sleep)
     }
 }
+/*
 func CheckSkipNode(client *kubernetes.Clientset, name string) bool {
     skipNode := false
     var skipNodeTaint = v1.Taint {
@@ -284,31 +281,4 @@ func CordonNode(client *kubernetes.Clientset,
     }
     return err
 }
-func KubeConfig() *rest.Config {
-    // try in-cluster config first
-    klog.V(4).InfoS("Try in-cluster config")
-    config, err = rest.InClusterConfig()
-    if err == nil {
-        klog.V(4).InfoS("In-cluster config is working")
-    } else {
-        klog.V(4).InfoS("In-cluster config is not working")
-        // try out-out-cluster config 
-        klog.V(4).InfoS("Try out-of-cluster config ($HOME/.kube/config)")
-        home, err := os.UserHomeDir()
-        if err != nil {
-            panic(err.Error())
-        } else {
-            if _, err := os.Stat(path.Join(home, ".kube/config")); err == nil {
-                config, err = clientcmd.BuildConfigFromFlags("",
-                                path.Join(home, ".kube/config"))
-                if err != nil {
-                    panic(err.Error())
-                }
-                klog.V(4).InfoS("Found API server", "API-Server", config.Host)
-            } else {
-                panic(err.Error())
-            }
-        }
-    }
-    return config
-}
+*/
