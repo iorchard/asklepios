@@ -168,6 +168,7 @@ func CordonNode(client *kubernetes.Clientset,
               "node", node.Name,
               "action", action,
             )
+            time.Sleep(time.Duration(3)*time.Second)
         }
     }
     return err

@@ -68,7 +68,6 @@ func runAsklepios(cmd *cobra.Command) {
     flag.Parse()
     // Initialize Viper if conffile exists
     viper.SetDefault("sleep", 10)
-    viper.SetDefault("interval", 3)
     viper.SetDefault("kickout", 60)
     viper.SetDefault("kickin", 60)
     conffile, _ := cmd.Flags().GetString("config")
@@ -77,7 +76,6 @@ func runAsklepios(cmd *cobra.Command) {
         klog.V(4).InfoS("Could not find config file", "config", conffile)
         klog.V(4).InfoS("Use the default config values",
             "sleep", viper.GetInt("sleep"),
-            "interval", viper.GetInt("interval"),
             "kickout", viper.GetInt("kickout"),
             "kickin", viper.GetInt("kickin"))
     } else {
@@ -91,12 +89,10 @@ func runAsklepios(cmd *cobra.Command) {
     } 
     // configuration values
     sleepSeconds := viper.GetInt("sleep")
-    intervalSeconds := viper.GetInt("interval")
     kickoutSeconds := viper.GetInt64("kickout")
     kickinSeconds := viper.GetInt64("kickin")
     var (
         sleep time.Duration = time.Duration(sleepSeconds)*time.Second
-        interval time.Duration = time.Duration(intervalSeconds)*time.Second
         kickout int64 = kickoutSeconds
         kickin int64 = kickinSeconds
     )
@@ -139,7 +135,6 @@ func runAsklepios(cmd *cobra.Command) {
                             if err != nil {
                                 klog.ErrorS(err, err.Error())
                             }
-                            time.Sleep(interval)
                             // taint node.kubernetes.io/out-of-service
                             err2 := utils.TaintNode(client, node.Name, true)
                             if err2 != nil {
@@ -164,7 +159,6 @@ func runAsklepios(cmd *cobra.Command) {
                             if err != nil {
                                 klog.ErrorS(err, err.Error())
                             }
-                            time.Sleep(interval)
                             // remove taint node.kubernetes.io/out-of-service
                             err2 := utils.TaintNode(client, node.Name, false)
                             if err2 != nil {
