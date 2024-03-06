@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: asklepios
+  namespace: kube-system
+  labels:
+    app: asklepios
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: asklepios
+  template:
+    metadata:
+      labels:
+        app: asklepios
+    spec:
+      priorityClassName: system-cluster-critical
+      serviceAccountName: asklepios-sa
+      containers:
+        - name: asklepios
+          image: docker.io/jijisa/asklepios:0.1.2
+          imagePullPolicy: IfNotPresent
+          command:
+            - "/bin/asklepios"
+          args:
+            - "-v=0"
+            - "serve"
+            - "--config"
+            - "/config-dir/config.yaml"
+          livenessProbe:
+            exec:
+              command:
+                - "/bin/asklepios"
+                - "probe"
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+            terminationGracePeriodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+          volumeMounts:
+            - mountPath: /config-dir
+              name: config-volume
+      volumes:
+      - name: config-volume
+        configMap:
+          name: asklepios-configmap
+      tolerations:
+      - effect: NoExecute
+        key: node.kubernetes.io/not-ready
+        operator: Exists
+        tolerationSeconds: 20
+      - effect: NoExecute
+        key: node.kubernetes.io/unreachable
+        operator: Exists
+        tolerationSeconds: 20
+
