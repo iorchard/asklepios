@@ -27,6 +27,18 @@ The configurations are as follows.
 * kickin: Time to wait before running the kickin process
   after the node becomes Ready (in seconds, Default: 60 seconds)
 
+If you do not want check a node,
+add node.kubernetes.io/asklepios=skip:NoExecute taint on the node.
+Then, Asklepios will not check the node status.::
+
+    kubectl taint nodes NODE_NAME node.kubernetes.io/asklepios=skip:NoExecute
+
+If you want to check a node, 
+remove node.kubernetes.io/asklepios=skip:NoExecute taint.::
+
+    kubectl taint nodes NODE_NAME node.kubernetes.io/asklepios=skip:NoExecute-
+    
+
 Build
 -----
 
