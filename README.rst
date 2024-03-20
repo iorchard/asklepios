@@ -9,14 +9,14 @@ when a node goes to the NotReady state so that the pods on the node can
 be moved to other nodes after the kickout time has elapsed.
 
 * Cordon the node to prevent pods from being scheduled.
-* Add a node.kubernetes.io/out-of-service:NoExecute taint so that pods stuck
-  on the node can be quickly moved to other nodes.
+* Add a node.kubernetes.io/out-of-service=nodeshutdown:NoExecute taint 
+  so that pods stuck on the node can be quickly moved to other nodes.
 
 When the node is healthy and ready, it will revert the actions taken 
 during kickout after the kickin configuration time has elapsed.
 
 * Uncordon the node to allow pods to be scheduled.
-* Remove the node.kubernetes.io/out-of-service:NoExecute taint 
+* Remove the node.kubernetes.io/out-of-service=nodeshutdown:NoExecute taint 
   to allow pods to run on the node.
 
 The configurations are as follows.
@@ -33,12 +33,11 @@ Then, Asklepios will not check the node status.::
 
     kubectl taint nodes NODE_NAME node.kubernetes.io/asklepios=skip:NoExecute
 
-If you want to check a node, 
+If you want to check a node again, 
 remove node.kubernetes.io/asklepios=skip:NoExecute taint.::
 
     kubectl taint nodes NODE_NAME node.kubernetes.io/asklepios=skip:NoExecute-
     
-
 Build
 -----
 
