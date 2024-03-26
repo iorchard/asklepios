@@ -138,7 +138,7 @@ func runAsklepios(cmd *cobra.Command) {
                             // taint node.kubernetes.io/out-of-service
                             err2 := utils.TaintNode(client, node.Name, true)
                             if err2 != nil {
-                                klog.ErrorS(err, err.Error())
+                                klog.ErrorS(err2, err2.Error())
                             }
                         } else {
                             tk := ltt - kickoutThreshold
@@ -162,7 +162,12 @@ func runAsklepios(cmd *cobra.Command) {
                             // remove taint node.kubernetes.io/out-of-service
                             err2 := utils.TaintNode(client, node.Name, false)
                             if err2 != nil {
-                                klog.ErrorS(err, err.Error())
+                                klog.ErrorS(err2, err2.Error())
+                            }
+                            // move mariadb/rabbitmq to the recovered node
+                            err3 := utils.RebalanceClusterPods(client)
+                            if err3 != nil {
+                                klog.ErrorS(err3, err3.Error())
                             }
                         } else {
                             tk := ltt - kickinThreshold
