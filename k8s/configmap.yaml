@@ -9,3 +9,4 @@ data:
     sleep: 10
     kickout: 60
     kickin: 60
+    balancer: false
