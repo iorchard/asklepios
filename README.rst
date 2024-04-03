@@ -26,6 +26,8 @@ The configurations are as follows.
   before running the kickout process (in seconds, Default: 60 seconds)
 * kickin: Time to wait before running the kickin process
   after the node becomes Ready (in seconds, Default: 60 seconds)
+* balancer: Rebalance rabbitmq/mariadb pods after node recovery
+  (true/false, Default: false)
 
 If you do not want check a node,
 add node.kubernetes.io/asklepios=skip:NoExecute taint on the node.
@@ -57,5 +59,4 @@ See if asklepios pod is running.::
     kubectl get po -n kube-system -l app=asklepios
     NAME                         READY   STATUS    RESTARTS   AGE
     asklepios-7fd4d69f95-2rz5c   1/1     Running   0          129m
-
 
